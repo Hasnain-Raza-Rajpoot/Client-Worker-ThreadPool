@@ -6,9 +6,11 @@
 #include <arpa/inet.h>
 #include "queue.c"
 
+
 Queue* ClntQue;
 pthread_mutex_t QueMutuex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t QueCV = PTHREAD_COND_INITIALIZER;
+
 
 
 void print_int(const void* data) {
@@ -16,3 +18,11 @@ void print_int(const void* data) {
 }
 
 char g_db_path[256];
+
+void print_string(const void* data) {
+    printf("\"%s\"", (char*)data);
+}
+
+void print_float(const void* data) {
+    printf("%.2f", *(float*)data);
+}
