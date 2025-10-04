@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include "queue.c"
 
+#define ThreadPoolSize 4
 
 Queue* ClntQue;
 pthread_mutex_t QueMutuex = PTHREAD_MUTEX_INITIALIZER;
