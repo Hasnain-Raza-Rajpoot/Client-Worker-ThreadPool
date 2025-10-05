@@ -12,8 +12,8 @@ sqlite3* open_db() {
     }
     return db;
 }
-
-int init(const char* db_path){
+// needed function for the 
+int init_db(const char* db_path){
     if(db_path && db_path[0] != '\0'){
       strncpy(g_db_path,db_path,(sizeof(g_db_path) - 1));
       g_db_path[sizeof(g_db_path - 1)] = '\0';
@@ -24,6 +24,7 @@ int init(const char* db_path){
         return -1;
     }
 
+    // add check for the username in change the datatype from TEXT to fixed char length
     const char *sql =
         "CREATE TABLE IF NOT EXISTS users ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -42,8 +43,9 @@ int init(const char* db_path){
     sqlite3_close(db);
     return 0;
 }
+// username unique check is missing
+bool signup(const char *username, const char *password) {
 
-   bool signup(const char *username, const char *password) {
     sqlite3 *db = open_db();
     if (!db){
         return false;
@@ -72,7 +74,7 @@ int init(const char* db_path){
     return ok;
 }
 
-   bool login(const char *username, const char *password) {
+bool login(const char *username, const char *password) {
     sqlite3 *db = open_db();
     if (!db) return false;
 
@@ -98,4 +100,29 @@ int init(const char* db_path){
     sqlite3_finalize(stmt);
     sqlite3_close(db);
     return ok;
+}
+
+int get_user_id(const char *username) {
+    sqlite3 *db = open_db();
+    if (!db) return -1;
+
+    const char *sql = "SELECT id FROM users WHERE username = ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
+
+    int user_id = -1;  // default if not found
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        user_id = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return user_id;
 }

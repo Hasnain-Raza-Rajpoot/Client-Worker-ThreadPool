@@ -10,10 +10,12 @@ char g_db_path[256];
 
 sqlite3* open_db();
 
-int init(const char* db_path);
+int init_db(const char* db_path);
 
 bool signup(const char *username, const char *password);
 
 bool login(const char *username, const char *password);
+
+int get_user_id(const char *username);
 
 #endif

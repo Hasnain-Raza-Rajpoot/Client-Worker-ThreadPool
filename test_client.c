@@ -4,51 +4,79 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define SERVER_PORT 80
-#define SERVER_ADDR "127.0.0.1"   // loopback for local testing
-#define BUFFER_SIZE 1024
+// helper to send data safely
+ssize_t send_all(int sock, const void *buf, size_t len) {
+    size_t total = 0;
+    const char *p = buf;
+    while (total < len) {
+        ssize_t n = send(sock, p + total, len - total, 0);
+        if (n <= 0) return n;
+        total += n;
+    }
+    return total;
+}
 
 int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
-    char buffer[BUFFER_SIZE] = {0};
 
-    // Create socket
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation error");
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(SERVER_PORT);
+    serv_addr.sin_port = htons(8000);  // same as server_port
 
-    // Convert IPv4/IPv6 addresses from text to binary form
-    if (inet_pton(AF_INET, SERVER_ADDR, &serv_addr.sin_addr) <= 0) {
+    // Convert IPv4 addresses from text to binary form
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
         perror("Invalid address/ Address not supported");
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
-    // Connect to server
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("Connection Failed");
-        exit(EXIT_FAILURE);
+        return -1;
     }
 
-    printf("Connected to server on %s:%d\n", SERVER_ADDR, SERVER_PORT);
+    printf("Connected to server!\n");
+    printf("Available commands: SIGNUP <username> <password>, LOGIN <username> <password>, UPLOAD <filename>, DOWNLOAD <filename>, DELETE <filename>, LIST\n");
 
-    // Send a message
-    char *hello = "Hello from client!";
-    send(sock, hello, strlen(hello), 0);
-    printf("Message sent: %s\n", hello);
+    while (1) {
+        char input[1024];
+        printf("\nEnter command: ");
+        fflush(stdout);
+        if (!fgets(input, sizeof(input), stdin)) break;
 
-    // // Receive a response (optional)
-    // int valread = read(sock, buffer, BUFFER_SIZE);
-    // if (valread > 0) {
-    //     buffer[valread] = '\0';
-    //     printf("Server response: %s\n", buffer);
-    // }
+        // remove trailing newline
+        input[strcspn(input, "\n")] = 0;
 
-    // Close socket
+        if (strlen(input) == 0) continue;
+        if (strcmp(input, "quit") == 0) break;
+
+        int len = strlen(input) + 1;  // include null terminator
+        if (send_all(sock, &len, sizeof(int)) <= 0) {
+            perror("Send length failed");
+            break;
+        }
+        if (send_all(sock, input, len) <= 0) {
+            perror("Send data failed");
+            break;
+        }
+
+        printf("Command sent: %s\n", input);
+
+        // // Optional: wait for response from server
+        // char buffer[1024];
+        // int n = recv(sock, buffer, sizeof(buffer)-1, 0);
+        // if (n > 0) {
+        //     buffer[n] = '\0';
+        //     printf("Server response: %s\n", buffer);
+        // } else {
+        //     printf("No response (server may close connection)\n");
+        // }
+    }
+
     close(sock);
     return 0;
 }
