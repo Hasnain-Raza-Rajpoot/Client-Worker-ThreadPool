@@ -43,6 +43,7 @@ int main() {
     printf("Available commands: SIGNUP <username> <password>, LOGIN <username> <password>, UPLOAD <filename>, DOWNLOAD <filename>, DELETE <filename>, LIST\n");
 
     while (1) {
+        printf("Loop start\n");
         char input[1024];
         printf("\nEnter command: ");
         fflush(stdout);
@@ -75,6 +76,7 @@ int main() {
         // } else {
         //     printf("No response (server may close connection)\n");
         // }
+        printf("Loop end\n");
     }
 
     close(sock);

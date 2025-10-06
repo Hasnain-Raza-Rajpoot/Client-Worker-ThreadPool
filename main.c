@@ -7,11 +7,51 @@
 #define server_port 8000
 atomic_int ServerRunning = 1;
 
+bool signup_login(char* Cmd, client* Gahak){
+    bool jaanDeyo=false;
+    printf("\nThe command is in the %s\n",Cmd);
+    char* what2do = firstWord(Cmd);
+    char* username = firstWord(Cmd);
+    char* password = firstWord(Cmd);
+    if(strcmp(what2do,"SIGNUP")==0){
+        printf("\nThe username is %s\n",username);
+        printf("The password is %s\n",password);
+        jaanDeyo=signup(username,password);
+        int user_id = get_user_id(username);
+        if(user_id!=-1){
+            char * foldername=malloc(strlen(username)+10);
+            memset(foldername,'\0',strlen(foldername));
+            strncpy(foldername,username,strlen(username));
+            printf("The current foldername is %s\n",foldername);
+            char str_user_id[1];
+            sprintf(str_user_id, "%d", user_id);
+            strcat(foldername,str_user_id);
+            if(mkdir(foldername,0777)!=0){
+                perror("Can not create the folder\n");
+                jaanDeyo = false;
+            }    
+            Gahak->user_id = user_id;
+            memset(Gahak->username,'\0',sizeof(Gahak->username));
+            strncpy(Gahak->username, username, strlen(username));
+            free(foldername);
+        }
+        else{
+            jaanDeyo = false;  
+        }
+    }
+    else if(strcmp(what2do,"LOGIN")==0){
+        strncpy(Gahak->username, username, strlen(username));
+        Gahak->user_id = get_user_id(username);
+        jaanDeyo=login(username,password);
+    }
+    free(username);
+    free(password);
+    return jaanDeyo;
+}
 
 bool upload(task* aikKaam, char* filename){
     aikKaam->cmd = UPLOAD;
     aikKaam->filename = filename;
-
     if(recv(aikKaam->Gahak.client_fd,&(aikKaam->payload_len),sizeof(size_t),0)>0){
         aikKaam->payload = malloc(aikKaam->payload_len*sizeof(char));
         if(recv(aikKaam->Gahak.client_fd,aikKaam->payload,aikKaam->payload_len,0)>0){
@@ -33,7 +73,6 @@ bool delete(task* aikKaam, char* filename){
     return true;
 }
 
-
 bool handleCmd(task* kaam,char * Cmd){
     char* what2do = firstWord(Cmd);
     char * filename = firstWord(Cmd);
@@ -47,6 +86,7 @@ bool handleCmd(task* kaam,char * Cmd){
 
 void* handle_client(void *arg){
     while(1){
+        printf("\nChl rha hai\n");
         pthread_mutex_lock(&ClientQueMutuex);
         if(queue_is_empty(ClntQue) && ServerRunning){
             pthread_cond_wait(&ClientQueCV,&ClientQueMutuex);
@@ -60,25 +100,51 @@ void* handle_client(void *arg){
         pthread_mutex_unlock(&ClientQueMutuex);
         int CmdSize;
         char * Cmd;
+        bool jaanDeyo=false;
         if(recv(Gahak.client_fd,&CmdSize,sizeof(int),0)>0){
             Cmd = malloc(CmdSize);
+            printf("\nGoing to check for he signup login\n");
             if(recv(Gahak.client_fd,Cmd,CmdSize,0)>0){
-                task kaam;
-                kaam.Gahak = Gahak;        
-                if(handleCmd(&kaam,Cmd))
-                {
-                    pthread_mutex_lock(&TaskQueMutuex);
-                    queue_enqueue(TaskQue,&kaam);
-                    queue_print(TaskQue,print_task);
-                    pthread_cond_signal(&TaskQueCV);
-                    pthread_mutex_unlock(&TaskQueMutuex);
-                }
-                else{
-                    // send invalid command response
-                    close(Gahak.client_fd);
-                }
+                jaanDeyo=signup_login(Cmd,&Gahak);
             }
         }
+        print_client(&Gahak);
+        free(Cmd);
+        task kaam={};
+        while(jaanDeyo){
+            if(recv(Gahak.client_fd,&CmdSize,sizeof(int),0)>0){
+                Cmd = malloc(CmdSize);
+                if(recv(Gahak.client_fd,Cmd,CmdSize,0)>0){
+                    kaam.Gahak = Gahak;        
+                    if(handleCmd(&kaam,Cmd))
+                    {
+                        printf("In the handle client\n");
+                        if(pthread_mutex_init(&kaam.m,NULL)!=0){
+                            perror("Failed to initialize task mutex for clientfd");
+                        }
+                        if(pthread_cond_init(&kaam.cv,NULL)!=0){
+                            perror("Failed to initialize task conditional variables for clientfd");
+                        }
+                        pthread_mutex_lock(&TaskQueMutuex);
+                        queue_enqueue(TaskQue,&kaam);
+                        queue_print(TaskQue,print_task);
+                        pthread_cond_signal(&TaskQueCV);
+                        pthread_mutex_unlock(&TaskQueMutuex);
+                        
+                        pthread_mutex_lock(&kaam.m);
+                        while(!kaam.done){
+                            pthread_cond_wait(&kaam.cv,&kaam.m);
+                        }
+                        pthread_mutex_unlock(&kaam.m);
+                    }
+                    else{
+                        // send invalid command response
+                    }
+                }
+                free(Cmd);
+            }
+        }
+        close(Gahak.client_fd);
     }
     return NULL;
 }
@@ -136,70 +202,15 @@ int main(){
         }
         int CmdSize;
         char * Cmd;
-        bool jaanDeyo=false;
-
         client Gahak;
-
-        if(recv(client_fd,&CmdSize,sizeof(int),0)>0){
-            Cmd = malloc(CmdSize);
-            if(recv(client_fd,Cmd,CmdSize,0)>0){
-                printf("\nThe command is in the %s\n",Cmd);
-                char* what2do = firstWord(Cmd);
-                if(strcmp(what2do,"SIGNUP")==0){
-                    char* username = firstWord(Cmd);
-                    char* password = firstWord(Cmd);
-                    printf("\nThe username is %s\n",username);
-                    printf("The password is %s\n",password);
-                    jaanDeyo=signup(username,password);
-                    int user_id = get_user_id(username);
-                    if(user_id!=-1){
-                        char * foldername=malloc(strlen(username)+10);
-                        memset(foldername,'\0',strlen(foldername));
-                        strncpy(foldername,username,strlen(username));
-                        printf("The current foldername is %s\n",foldername);
-                        char str_user_id[2];
-                        sprintf(str_user_id, "%d", user_id);
-                        strcat(foldername,str_user_id);
-                        if(mkdir(foldername,0777)!=0){
-                            perror("Can not create the folder\n");
-                            jaanDeyo = false;
-                        }    
-                        
-                        Gahak.client_fd = client_fd;
-                        Gahak.user_id = user_id;
-                        memset(Gahak.username,'\0',sizeof(Gahak.username));
-                        strncpy(Gahak.username, username, strlen(username));
-                        free(foldername);
-                    }
-                    else{
-                        jaanDeyo = false;  
-                    }
-                    free(username);
-                    free(password);
-                }
-                else if(strcmp(what2do,"LOGIN")==0){
-                    char* username = firstWord(Cmd);
-                    char* password = firstWord(Cmd);
-                    strncpy(Gahak.username, username, strlen(username));
-                    Gahak.client_fd = client_fd;
-                    Gahak.user_id = get_user_id(username);
-                    jaanDeyo=login(username,password);
-                }
-            }
-        }
-        if(jaanDeyo){
-            pthread_mutex_lock(&ClientQueMutuex);
-            queue_enqueue(ClntQue,&Gahak);
-            printf("\n\n\n--------------------------------------\n\n");
-            queue_print(ClntQue,print_client);
-            printf("--------------------------------------\n\n");
-            pthread_cond_signal(&ClientQueCV);
-            pthread_mutex_unlock(&ClientQueMutuex);
-        } 
-        else{
-            printf("Closing the client_fd");
-            close(client_fd);
-        }
+        Gahak.client_fd = client_fd;
+        pthread_mutex_lock(&ClientQueMutuex);
+        queue_enqueue(ClntQue,&Gahak);
+        printf("\n--------------------------------------\n\n");
+        queue_print(ClntQue,print_client);
+        printf("--------------------------------------\n\n");
+        pthread_cond_signal(&ClientQueCV);
+        pthread_mutex_unlock(&ClientQueMutuex);
 
     }
     close(server_fd);
