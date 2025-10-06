@@ -12,7 +12,7 @@ sqlite3* open_db() {
     }
     return db;
 }
-// needed function for the 
+
 int init_db(const char* db_path){
     if(db_path && db_path[0] != '\0'){
       strncpy(g_db_path,db_path,(sizeof(g_db_path) - 1));
@@ -24,11 +24,10 @@ int init_db(const char* db_path){
         return -1;
     }
 
-    // add check for the username in change the datatype from TEXT to fixed char length
     const char *sql =
         "CREATE TABLE IF NOT EXISTS users ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "username TEXT UNIQUE NOT NULL,"
+        "username TEXT UNIQUE NOT NULL CHECK (length(username) <= 256),"
         "password TEXT NOT NULL"
         ");";
 
@@ -43,18 +42,43 @@ int init_db(const char* db_path){
     sqlite3_close(db);
     return 0;
 }
-// username unique check is missing
-bool signup(const char *username, const char *password) {
 
-    sqlite3 *db = open_db();
-    if (!db){
+bool signup(const char *username, const char *password) {
+    //length check
+    if (strlen(username) == 0 || strlen(username) > 256) {
+        fprintf(stderr, "Signup failed: Username must be 1–256 characters.\n");
         return false;
     }
 
-    const char *sql = "INSERT INTO users (username, password) VALUES (?, ?);";
+    sqlite3 *db = open_db();
+    if (!db) return false;
+
+    //check if username already exists
+    const char *check_sql = "SELECT 1 FROM users WHERE username = ?;";
+    sqlite3_stmt *check_stmt;
+
+    if (sqlite3_prepare_v2(db, check_sql, -1, &check_stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return false;
+    }
+
+    sqlite3_bind_text(check_stmt, 1, username, -1, SQLITE_STATIC);
+
+    bool exists = (sqlite3_step(check_stmt) == SQLITE_ROW);
+    sqlite3_finalize(check_stmt);
+
+    if (exists) {
+        fprintf(stderr, "Signup failed: Username '%s' already exists. Choose a different one.\n", username);
+        sqlite3_close(db);
+        return false;
+    }
+
+    // Insert new user
+    const char *insert_sql = "INSERT INTO users (username, password) VALUES (?, ?);";
     sqlite3_stmt *stmt;
 
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL) != SQLITE_OK) {
         fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
         sqlite3_close(db);
         return false;
