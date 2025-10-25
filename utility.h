@@ -8,6 +8,7 @@
 #include "storage.c"
 #include "client.h"
 #include "task.h"
+#include<math.h>
 
 #define ThreadPoolSize 4
 int server_fd;
@@ -64,4 +65,11 @@ char* firstWord(char* Stmt){
         Stmt[0]='\0';
     }
     return firstWord;
+}
+
+
+int countDigits(int n) {
+    if (n == 0)
+        return 1;
+    return (int)log10(fabs(n)) + 1;
 }
