@@ -9,7 +9,6 @@
 atomic_int ServerRunning = 1;
 
 void execute_task(task* kaam) {
-    // Build the user's directory path
     char user_dir[512];
     int dc = countDigits(kaam->Gahak.user_id);
     char* str_user_id = malloc(dc + 1);
@@ -21,12 +20,9 @@ void execute_task(task* kaam) {
     switch(kaam->cmd) {
         case UPLOAD: {
             printf("Worker: Uploading file %s\n", kaam->filename);
-            
-            // Build full file path
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
-            
-            // Write payload to file
+            printf("The filepath is %s\n",filepath);
             FILE* fp = fopen(filepath, "wb");
             if(fp == NULL) {
                 perror("Failed to open file for writing");
@@ -47,8 +43,6 @@ void execute_task(task* kaam) {
                 kaam->resp = strdup("UPLOAD SUCCESS");
             }
             kaam->resp_len = strlen(kaam->resp) + 1;
-            
-            // Free the payload after writing
             free(kaam->payload);
             kaam->payload = NULL;
             break;
@@ -59,8 +53,7 @@ void execute_task(task* kaam) {
             
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
-            
-            // Read file from disk
+            printf("The filepath is %s\n",filepath);
             FILE* fp = fopen(filepath, "rb");
             if(fp == NULL) {
                 perror("Failed to open file for reading");
@@ -69,13 +62,9 @@ void execute_task(task* kaam) {
                 kaam->resp_len = strlen(kaam->resp) + 1;
                 break;
             }
-            
-            // Get file size
             fseek(fp, 0, SEEK_END);
             long file_size = ftell(fp);
             fseek(fp, 0, SEEK_SET);
-            
-            // Allocate buffer and read file
             kaam->resp = malloc(file_size);
             if(kaam->resp == NULL) {
                 fclose(fp);
@@ -97,6 +86,7 @@ void execute_task(task* kaam) {
                 kaam->status = 0;
                 kaam->resp_len = file_size;
             }
+            printf("Successfully downloaded the %s from the %s\n",kaam->filename,filepath);
             break;
         }
         
@@ -129,14 +119,12 @@ void execute_task(task* kaam) {
                 kaam->resp_len = strlen(kaam->resp) + 1;
                 break;
             }
-            
-            // Build file list
+    
             char file_list[4096] = "FILES:\n";
             struct dirent* entry;
             int count = 0;
             
             while((entry = readdir(dir)) != NULL) {
-                // Skip . and ..
                 if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                     continue;
                     
@@ -175,21 +163,16 @@ void* handle_worker(void* arg) {
             break;
         }
         
-        task kaam;
+        task* kaam;
         queue_dequeue(TaskQue, &kaam);
         pthread_mutex_unlock(&TaskQueMutuex);
         
-        printf("\nWorker thread processing task for user: %s\n", kaam.Gahak.username);
-        
-        execute_task(&kaam);
-        
-        pthread_mutex_lock(&kaam.m);
-        kaam.done = 1;
-        pthread_cond_signal(&kaam.cv);
-        pthread_mutex_unlock(&kaam.m);
-        
-        pthread_mutex_destroy(&kaam.m);
-        pthread_cond_destroy(&kaam.cv);
+        printf("\nWorker thread processing task for user: %s\n", kaam->Gahak.username);
+        execute_task(kaam);
+        pthread_mutex_lock(&kaam->m);
+        kaam->done = 1;
+        pthread_cond_signal(&kaam->cv);
+        pthread_mutex_unlock(&kaam->m);
     }
     return NULL;
 }
@@ -237,6 +220,7 @@ bool signup_login(char* Cmd, client* Gahak){
         Gahak->user_id = get_user_id(username);
         jaanDeyo=login(username,password);
     }
+    free(what2do);
     free(username);
     free(password);
     printf("The singup login function returns: %d\n",jaanDeyo);
@@ -271,18 +255,31 @@ bool handleCmd(task* kaam,char * Cmd){
     char* what2do = firstWord(Cmd);
     char * filename = firstWord(Cmd);
 
-    return (((strcmp(what2do,"UPLOAD") == 0) && upload(kaam,filename)) 
+    bool result = (((strcmp(what2do,"UPLOAD") == 0) && upload(kaam,filename)) 
             || ((strcmp(what2do,"DOWNLOAD") == 0) && download(kaam,filename)) 
             || ((strcmp(what2do,"DELETE") == 0)  && delete(kaam,filename))
             || ((strcmp(what2do,"LIST") == 0) && (kaam->cmd = LIST)));
+    
+    free(what2do);   
+    return result;
+}
 
+ssize_t send_all(int sock, const void *buf, size_t len) {
+    size_t total = 0;
+    const char *p = buf;
+    while (total < len) {
+        ssize_t n = send(sock, p + total, len - total, 0);
+        if (n <= 0) return n;
+        total += n;
+    }
+    return total;
 }
 
 void* handle_client(void *arg){
     while(1){
-        printf("\nChl rha hai\n");
+        printf("\nClient thread waiting for connection\n");
         pthread_mutex_lock(&ClientQueMutuex);
-        if(queue_is_empty(ClntQue) && ServerRunning){
+        while(queue_is_empty(ClntQue) && ServerRunning){
             pthread_cond_wait(&ClientQueCV,&ClientQueMutuex);
         }
         if(!ServerRunning && queue_is_empty(ClntQue)){
@@ -292,69 +289,141 @@ void* handle_client(void *arg){
         client Gahak;
         queue_dequeue(ClntQue,&Gahak);
         pthread_mutex_unlock(&ClientQueMutuex);
+        
         int CmdSize;
         char * Cmd;
         bool jaanDeyo=false;
+
         if(recv(Gahak.client_fd,&CmdSize,sizeof(int),0)>0){
             Cmd = malloc(CmdSize);
             if(recv(Gahak.client_fd,Cmd,CmdSize,0)>0){
-                printf("\nGoing to check for he signup login\n");
+                printf("\nGoing to check for signup/login\n");
                 jaanDeyo=signup_login(Cmd,&Gahak);
                 print_client(&Gahak);
-            }
-        }
-        free(Cmd);
-        task kaam={};
-        while(jaanDeyo){
-            if(recv(Gahak.client_fd,&CmdSize,sizeof(int),0)>0){
-                Cmd = malloc(CmdSize);
-                if(recv(Gahak.client_fd,Cmd,CmdSize,0)>0){
-                    kaam.Gahak = Gahak;        
-                    int i = handleCmd(&kaam,Cmd);
-                    printf("\nInavalid command\n");
-                    if(i)
-                    {
-                        printf("In the handle client\n");
-                        if(pthread_mutex_init(&kaam.m,NULL)!=0){
-                            perror("Failed to initialize task mutex for clientfd");
-                        }
-                        if(pthread_cond_init(&kaam.cv,NULL)!=0){
-                            perror("Failed to initialize task conditional variables for clientfd");
-                        }
-                        pthread_mutex_lock(&TaskQueMutuex);
-                        queue_enqueue(TaskQue,&kaam);
-                        queue_print(TaskQue,print_task);
-                        pthread_cond_signal(&TaskQueCV);
-                        pthread_mutex_unlock(&TaskQueMutuex);
-                        
-                        pthread_mutex_lock(&kaam.m);
-                        while(!kaam.done){
-                            pthread_cond_wait(&kaam.cv,&kaam.m);
-                        }
-                        pthread_mutex_unlock(&kaam.m);
-                    }
-                    else{
-                        // send invalid command response
-                    }
+                
+                if(jaanDeyo) {
+                    char* auth_resp = "AUTH SUCCESS";
+                    size_t auth_len = strlen(auth_resp) + 1;
+                    send_all(Gahak.client_fd, &auth_len, sizeof(size_t));
+                    send_all(Gahak.client_fd, auth_resp, auth_len);
+                } else {
+                    char* auth_resp = "AUTH FAILED";
+                    size_t auth_len = strlen(auth_resp) + 1;
+                    send_all(Gahak.client_fd, &auth_len, sizeof(size_t));
+                    send_all(Gahak.client_fd, auth_resp, auth_len);
                 }
-                free(Cmd);
             }
+            free(Cmd);
         }
+        
+        while(jaanDeyo){
+            if(recv(Gahak.client_fd,&CmdSize,sizeof(int),0)<=0){
+                printf("Client disconnected\n");
+                break;
+            }
+            
+            Cmd = malloc(CmdSize);
+            if(recv(Gahak.client_fd,Cmd,CmdSize,0)<=0){
+                free(Cmd);
+                printf("Failed to receive command data\n");
+                break;
+            }
+            
+            printf("\nReceived command: %s\n", Cmd);
+            
+            task* kaam = (task*)malloc(sizeof(task));
+            memset(kaam, 0, sizeof(task));
+            kaam->Gahak = Gahak;
+            
+            int valid_cmd = handleCmd(kaam, Cmd);
+            
+            if(valid_cmd) {
+                printf("Valid command, processing...\n");
+                kaam->m = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+                kaam->cv = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
+                
+                if(pthread_mutex_init(&kaam->m, NULL) != 0){
+                    perror("Failed to initialize task mutex");
+                    free(kaam);
+                    free(Cmd);
+                    continue;
+                }
+                if(pthread_cond_init(&kaam->cv, NULL) != 0){
+                    perror("Failed to initialize task cv");
+                    pthread_mutex_destroy(&kaam->m);
+                    free(kaam);
+                    free(Cmd);
+                    continue;
+                }
+                
+                pthread_mutex_lock(&TaskQueMutuex);
+                queue_enqueue(TaskQue, &kaam);
+                pthread_cond_signal(&TaskQueCV);
+                pthread_mutex_unlock(&TaskQueMutuex);
+                
+                printf("Task enqueued, waiting for worker...\n");
+                
+                pthread_mutex_lock(&kaam->m);
+                while(!kaam->done){
+                    pthread_cond_wait(&kaam->cv, &kaam->m);
+                }
+                pthread_mutex_unlock(&kaam->m);
+                
+                printf("Task completed by worker. Status: %d\n", kaam->status);
+                
+                if(kaam->resp && kaam->resp_len > 0) {
+                    printf("Sending response to client (len: %zu)\n", kaam->resp_len);
+                    
+                    if(send_all(Gahak.client_fd, &kaam->resp_len, sizeof(size_t)) <= 0) {
+                        perror("Failed to send response length");
+                    } else {
+                        
+                        if(send_all(Gahak.client_fd, kaam->resp, kaam->resp_len) <= 0) {
+                            perror("Failed to send response data");
+                        } else {
+                            printf("Response sent successfully\n");
+                        }
+                    }
+                    
+                    free(kaam->resp);
+                } else {
+                    printf("No response to send\n");
+                }
+            
+                if(kaam->filename) {
+                    free(kaam->filename);
+                }
+                pthread_mutex_destroy(&kaam->m);
+                pthread_cond_destroy(&kaam->cv);
+                free(kaam);
+            } else {
+                printf("Invalid command\n");
+                char* err_msg = "INVALID COMMAND";
+                size_t err_len = strlen(err_msg) + 1;
+                send_all(Gahak.client_fd, &err_len, sizeof(size_t));
+                send_all(Gahak.client_fd, err_msg, err_len);
+            }
+            
+            free(Cmd);
+        }
+        
         close(Gahak.client_fd);
-        printf("Client is freeing the user id:\n");
+        printf("Client connection closed\n");
     }
     return NULL;
 }
 
 void handle_signint(int signum){
+    printf("\nReceived SIGINT, shutting down...\n");
     ServerRunning = 0;
     close(server_fd);
     pthread_cond_broadcast(&ClientQueCV);
+    pthread_cond_broadcast(&TaskQueCV);
 }
 
 int main(){
     if(init_db("DB/users.db")!=0){
-        perror("\n Can not init the db\n");
+        perror("\nCan not init the db\n");
         return 0;
     }
 
@@ -364,10 +433,16 @@ int main(){
     pthread_t ClienThreadPool[ThreadPoolSize];
     pthread_t WorkerThreadPool[ThreadPoolSize];
 
-    signal(SIGINT,handle_signint);
+    signal(SIGINT, handle_signint);
 
-    if((server_fd = socket(AF_INET,SOCK_STREAM,0))==0){
+    if((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0){
         perror("Failed to start the server");
+        exit(0);
+    }
+
+    int opt = 1;
+    if(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt failed");
         exit(0);
     }
 
@@ -375,56 +450,65 @@ int main(){
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(server_port);
 
-    if(bind(server_fd,(struct sockaddr*)&address,sizeof(address))<0){
+    if(bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0){
         perror("Failed to bind the server\n");
         exit(0);
     }
 
-    if(listen(server_fd,3)<0){
+    if(listen(server_fd, 10) < 0){
         perror("Server failed to listen");
         exit(0);
     }
 
-    ClntQue = queue_init(sizeof(client));
-    TaskQue = queue_init(sizeof(task));
+    printf("Server listening on port %d...\n", server_port);
 
-    for(int i=0;i<ThreadPoolSize;i++){
-        pthread_create(&ClienThreadPool[i],NULL,&handle_client,NULL);
+    ClntQue = queue_init(sizeof(client));
+    TaskQue = queue_init(sizeof(task*));
+
+    for(int i=0; i<ThreadPoolSize; i++){
+        pthread_create(&ClienThreadPool[i], NULL, &handle_client, NULL);
     }
+    
     for(int i=0; i<ThreadPoolSize; i++){
         pthread_create(&WorkerThreadPool[i], NULL, &handle_worker, NULL);
     }
+    
+    printf("Thread pools created (size: %d each)\n", ThreadPoolSize);
+
     while(ServerRunning){
-        if((client_fd=accept(server_fd,(struct sockaddr*)&address,&addrlen))<0){
+        if((client_fd = accept(server_fd, (struct sockaddr*)&address, &addrlen)) < 0){
             if(!ServerRunning)
                 break;
-            perror("Failed to load the client_fd");
+            perror("Failed to accept client");
             continue;
         }
-        int CmdSize;
-        char * Cmd;
+        
+        printf("\n=== New client connected (fd: %d) ===\n", client_fd);
+        
         client Gahak;
         Gahak.client_fd = client_fd;
+        
         pthread_mutex_lock(&ClientQueMutuex);
-        queue_enqueue(ClntQue,&Gahak);
-        printf("\n--------------------------------------\n\n");
-        queue_print(ClntQue,print_client);
-        printf("--------------------------------------\n\n");
+        queue_enqueue(ClntQue, &Gahak);
         pthread_cond_signal(&ClientQueCV);
         pthread_mutex_unlock(&ClientQueMutuex);
+    }
 
-    }
+    printf("\nShutting down server...\n");
     close(server_fd);
-    for(int i=0;i<ThreadPoolSize;i++){
-        pthread_join(ClienThreadPool[i],NULL);
+    
+    for(int i=0; i<ThreadPoolSize; i++){
+        pthread_join(ClienThreadPool[i], NULL);
     }
-    pthread_cond_broadcast(&TaskQueCV);
+    
     for(int i=0; i<ThreadPoolSize; i++){
         pthread_join(WorkerThreadPool[i], NULL);
     }
 
-    printf("The value %d\n",global);
+    printf("All threads joined\n");
     queue_destroy(ClntQue);
     queue_destroy(TaskQue);
+    printf("Server shutdown complete\n");
+    
     return 0;
 }

@@ -3,7 +3,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/stat.h>
 #include <stdbool.h>
 
 // helper to send data safely
@@ -32,7 +31,7 @@ ssize_t recv_all(int sock, void *buf, size_t len) {
 
 // extract first word from string
 char* get_first_word(const char* str) {
-    char* space = strchr(str, ' ');
+    const char* space = strchr(str, ' ');
     if (space) {
         size_t len = space - str;
         char* word = malloc(len + 1);
@@ -45,10 +44,10 @@ char* get_first_word(const char* str) {
 
 // extract filename from command
 char* get_filename(const char* str) {
-    char* space = strchr(str, ' ');
+    const char* space = strchr(str, ' ');
     if (space) {
         space++; // skip the space
-        char* end = strchr(space, ' ');
+        const char* end = strchr(space, ' ');
         if (end) {
             size_t len = end - space;
             char* filename = malloc(len + 1);
@@ -108,13 +107,6 @@ void handle_upload(int sock, const char* filename) {
 
     free(buffer);
     printf("File upload data sent successfully\n");
-}
-
-void handle_download(int sock, const char* filename) {
-    printf("Waiting for download response...\n");
-    
-    // Server will send response through normal flow
-    // File content will be in the response
 }
 
 int main() {
@@ -182,7 +174,7 @@ int main() {
 
         printf("Command sent: %s\n", input);
 
-        // Handle special cases for UPLOAD
+        // Handle special cases for UPLOAD (send file data)
         if (strcmp(cmd, "UPLOAD") == 0) {
             char* filename = get_filename(input);
             if (filename) {
@@ -193,21 +185,69 @@ int main() {
             }
         }
         
-        // Check if this was authentication command
-        if (strcmp(cmd, "SIGNUP") == 0 || strcmp(cmd, "LOGIN") == 0) {
-            // After sending auth command, wait briefly for processing
-            // In a real implementation, you'd wait for explicit response
-            printf("Authentication command sent. You can now use file commands.\n");
-            authenticated = true;
+        // Wait for server response
+        size_t resp_len;
+        if (recv_all(sock, &resp_len, sizeof(size_t)) > 0) {
+            char* response = malloc(resp_len);
+            if (response && recv_all(sock, response, resp_len) > 0) {
+                
+                // Check if authentication command
+                if (strcmp(cmd, "SIGNUP") == 0 || strcmp(cmd, "LOGIN") == 0) {
+                    printf("Server response: %s\n", response);
+                    if (strstr(response, "SUCCESS")) {
+                        authenticated = true;
+                        printf("You are now authenticated!\n");
+                    }
+                }
+                // Handle DOWNLOAD - save file to disk
+                else if (strcmp(cmd, "DOWNLOAD") == 0) {
+                    if (strstr(response, "FAILED")) {
+                        // Error message
+                        printf("Server response: %s\n", response);
+                    } else {
+                        // File data - save to disk
+                        char* filename = get_filename(input);
+                        if (filename) {
+                            // Create downloads directory if it doesn't exist
+                            system("mkdir -p downloads");
+                            
+                            char filepath[512];
+                            snprintf(filepath, sizeof(filepath), "downloads/%s", filename);
+                            
+                            FILE* fp = fopen(filepath, "wb");
+                            if (fp) {
+                                fwrite(response, 1, resp_len, fp);
+                                fclose(fp);
+                                printf("✓ File downloaded successfully: %s\n", filepath);
+                            } else {
+                                perror("Failed to save downloaded file");
+                            }
+                            free(filename);
+                        }
+                    }
+                }
+                // Handle LIST - display file list
+                else if (strcmp(cmd, "LIST") == 0) {
+                    printf("\n%s\n", response);
+                }
+                // Handle other commands (DELETE, UPLOAD response)
+                else {
+                    printf("Server response: %s\n", response);
+                }
+                
+                free(response);
+            } else {
+                fprintf(stderr, "Failed to receive response data\n");
+                if (response) free(response);
+            }
+        } else {
+            fprintf(stderr, "Failed to receive response length\n");
         }
 
         free(cmd);
-        
-        // Small delay to let server process
-        usleep(100000); // 100ms
     }
 
     close(sock);
-    printf("Connection closed.\n");
+    printf("\nConnection closed.\n");
     return 0;
 }
