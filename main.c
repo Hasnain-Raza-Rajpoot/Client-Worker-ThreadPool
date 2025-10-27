@@ -23,12 +23,20 @@ void execute_task(task* kaam) {
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
             printf("The filepath is %s\n",filepath);
+            pthread_mutex_t* file_lock = acquire_file_lock(GlobalFileLockTable, filepath);
+            if (!file_lock) {
+                kaam->status = -1;
+                kaam->resp = strdup("UPLOAD FAILED: Could not acquire lock");
+                kaam->resp_len = strlen(kaam->resp) + 1;
+                break;
+            }
             FILE* fp = fopen(filepath, "wb");
             if(fp == NULL) {
                 perror("Failed to open file for writing");
                 kaam->status = -1;
                 kaam->resp = strdup("UPLOAD FAILED: Cannot create file");
                 kaam->resp_len = strlen(kaam->resp) + 1;
+                release_file_lock(GlobalFileLockTable, filepath);
                 break;
             }
             
@@ -45,6 +53,7 @@ void execute_task(task* kaam) {
             kaam->resp_len = strlen(kaam->resp) + 1;
             free(kaam->payload);
             kaam->payload = NULL;
+            release_file_lock(GlobalFileLockTable, filepath);
             break;
         }
         
@@ -54,12 +63,20 @@ void execute_task(task* kaam) {
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
             printf("The filepath is %s\n",filepath);
+            pthread_mutex_t* file_lock = acquire_file_lock(GlobalFileLockTable, filepath);
+            if (!file_lock) {
+                kaam->status = -1;
+                kaam->resp = strdup("UPLOAD FAILED: Could not acquire lock");
+                kaam->resp_len = strlen(kaam->resp) + 1;
+                break;
+            }
             FILE* fp = fopen(filepath, "rb");
             if(fp == NULL) {
                 perror("Failed to open file for reading");
                 kaam->status = -1;
                 kaam->resp = strdup("DOWNLOAD FAILED: File not found");
                 kaam->resp_len = strlen(kaam->resp) + 1;
+                release_file_lock(GlobalFileLockTable, filepath);
                 break;
             }
             fseek(fp, 0, SEEK_END);
@@ -71,6 +88,7 @@ void execute_task(task* kaam) {
                 kaam->status = -1;
                 kaam->resp = strdup("DOWNLOAD FAILED: Memory allocation error");
                 kaam->resp_len = strlen(kaam->resp) + 1;
+                release_file_lock(GlobalFileLockTable, filepath);
                 break;
             }
             
@@ -87,6 +105,7 @@ void execute_task(task* kaam) {
                 kaam->resp_len = file_size;
             }
             printf("Successfully downloaded the %s from the %s\n",kaam->filename,filepath);
+            release_file_lock(GlobalFileLockTable, filepath);
             break;
         }
         
@@ -95,6 +114,14 @@ void execute_task(task* kaam) {
             
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
+
+            pthread_mutex_t* file_lock = acquire_file_lock(GlobalFileLockTable, filepath);
+            if (!file_lock) {
+                kaam->status = -1;
+                kaam->resp = strdup("DELETE FAILED: Could not acquire lock");
+                kaam->resp_len = strlen(kaam->resp) + 1;
+                break;
+            }
             
             if(unlink(filepath) == 0) {
                 kaam->status = 0;
@@ -105,18 +132,26 @@ void execute_task(task* kaam) {
                 kaam->resp = strdup("DELETE FAILED: File not found or permission denied");
             }
             kaam->resp_len = strlen(kaam->resp) + 1;
+            release_file_lock(GlobalFileLockTable, filepath);
             break;
         }
         
         case LIST: {
             printf("Worker: Listing files for user %s\n", kaam->Gahak.username);
-            
+            pthread_mutex_t* dir_lock = acquire_file_lock(GlobalFileLockTable, user_dir);
+            if (!dir_lock) {
+                kaam->status = -1;
+                kaam->resp = strdup("LIST FAILED: Could not acquire lock");
+                kaam->resp_len = strlen(kaam->resp) + 1;
+                break;
+            }
             DIR* dir = opendir(user_dir);
             if(dir == NULL) {
                 perror("Failed to open directory");
                 kaam->status = -1;
                 kaam->resp = strdup("LIST FAILED: Cannot open directory");
                 kaam->resp_len = strlen(kaam->resp) + 1;
+                release_file_lock(GlobalFileLockTable, user_dir);
                 break;
             }
     
@@ -141,6 +176,7 @@ void execute_task(task* kaam) {
             kaam->status = 0;
             kaam->resp = strdup(file_list);
             kaam->resp_len = strlen(kaam->resp) + 1;
+            release_file_lock(GlobalFileLockTable, user_dir);
             break;
         }
         
@@ -433,6 +469,12 @@ int main(){
     pthread_t ClienThreadPool[ThreadPoolSize];
     pthread_t WorkerThreadPool[ThreadPoolSize];
 
+    GlobalFileLockTable = file_lock_table_init();
+    if (!GlobalFileLockTable) {
+        fprintf(stderr, "Failed to initialize file lock table\n");
+        return 1;
+    }
+
     signal(SIGINT, handle_signint);
 
     if((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0){
@@ -506,6 +548,8 @@ int main(){
     }
 
     printf("All threads joined\n");
+    file_lock_table_print(GlobalFileLockTable);  
+    file_lock_table_destroy(GlobalFileLockTable);
     queue_destroy(ClntQue);
     queue_destroy(TaskQue);
     printf("Server shutdown complete\n");

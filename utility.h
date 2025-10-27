@@ -9,12 +9,14 @@
 #include "client.h"
 #include "task.h"
 #include<math.h>
+#include "file_locks.c"
 
 #define ThreadPoolSize 4
 int server_fd;
 
 Queue* ClntQue;
 Queue* TaskQue;
+FileLockTable* GlobalFileLockTable;
 
 pthread_mutex_t ClientQueMutuex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t ClientQueCV = PTHREAD_COND_INITIALIZER;
