@@ -1,63 +1,97 @@
-# Makefile for Generic Queue Implementation
+# Makefile for Multi-threaded File Storage Server
 
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
-TARGET = test_queue
-OBJECTS = queue.o test_queue.o
+LDFLAGS = -pthread -lsqlite3 -lm
 
-# Default target
-all: $(TARGET)
+SERVER_TARGET = server
+CLIENT_TARGET = client
 
-# Build the test program
-$(TARGET): $(OBJECTS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
+# List server and client source files
+SERVER_C_FILES = main.c queue.c storage.c file_locks.c utility.c
+CLIENT_C_FILES = test_client.c
 
-# Compile queue.c
-queue.o: queue.c queue.h
-	$(CC) $(CFLAGS) -c queue.c
+# Automatically generate object file names
+SERVER_OBJECTS = $(SERVER_C_FILES:.c=.o)
+CLIENT_OBJECTS = $(CLIENT_C_FILES:.c=.o)
 
-# Compile test_queue.c
-test_queue.o: test_queue.c queue.h
-	$(CC) $(CFLAGS) -c test_queue.c
+# Default target: build both
+all: $(SERVER_TARGET) $(CLIENT_TARGET)
 
-# Run the test program
-run: $(TARGET)
-	./$(TARGET)
+# Build the server executable
+$(SERVER_TARGET): $(SERVER_OBJECTS)
+	$(CC) $(CFLAGS) -o $(SERVER_TARGET) $(SERVER_OBJECTS) $(LDFLAGS)
 
-# Clean up object files and executable
+# Build the client executable
+$(CLIENT_TARGET): $(CLIENT_OBJECTS)
+	$(CC) $(CFLAGS) -o $(CLIENT_TARGET) $(CLIENT_OBJECTS) $(LDFLAGS)
+
+# Generic rule for compiling .c files into .o files
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Run the server program
+run_server: $(SERVER_TARGET)
+	./$(SERVER_TARGET)
+
+# Run the client program
+run_client: $(CLIENT_TARGET)
+	./$(CLIENT_TARGET)
+
+# Clean up object files and executables
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(SERVER_OBJECTS) $(CLIENT_OBJECTS) $(SERVER_TARGET) $(CLIENT_TARGET) test_queue test_storage
 
 # Clean and rebuild
 rebuild: clean all
 
 # Debug build
 debug: CFLAGS += -DDEBUG -O0
-debug: $(TARGET)
+debug: $(SERVER_TARGET) $(CLIENT_TARGET)
 
 # Release build
 release: CFLAGS += -O2 -DNDEBUG
-release: clean $(TARGET)
+release: clean $(SERVER_TARGET) $(CLIENT_TARGET)
 
-# Install (copy to /usr/local/bin - requires sudo)
-install: $(TARGET)
-	sudo cp $(TARGET) /usr/local/bin/
+# ==========================================================
+# Sanitizers (ThreadSanitizer and AddressSanitizer)
+# ==========================================================
 
-# Uninstall
-uninstall:
-	sudo rm -f /usr/local/bin/$(TARGET)
+TSAN_FLAGS = -fsanitize=thread -fno-omit-frame-pointer
+ASAN_FLAGS = -fsanitize=address -fno-omit-frame-pointer
+
+# ThreadSanitizer builds
+tsan: CFLAGS += $(TSAN_FLAGS)
+tsan: LDFLAGS += $(TSAN_FLAGS)
+tsan: clean $(SERVER_TARGET) $(CLIENT_TARGET)
+
+# AddressSanitizer builds
+asan: CFLAGS += $(ASAN_FLAGS)
+asan: LDFLAGS += $(ASAN_FLAGS)
+asan: clean $(SERVER_TARGET) $(CLIENT_TARGET)
+
+# ==========================================================
+# Valgrind helpers
+# ==========================================================
+
+VALGRIND = valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes
+
+valgrind_server: $(SERVER_TARGET)
+	$(VALGRIND) ./$(SERVER_TARGET)
+
+valgrind_client: $(CLIENT_TARGET)
+	$(VALGRIND) ./$(CLIENT_TARGET)
 
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  all      - Build the test program (default)"
-	@echo "  run      - Build and run the test program"
-	@echo "  clean    - Remove object files and executable"
-	@echo "  rebuild  - Clean and rebuild"
-	@echo "  debug    - Build with debug flags"
-	@echo "  release  - Build with optimization flags"
-	@echo "  install  - Install to /usr/local/bin (requires sudo)"
-	@echo "  uninstall- Remove from /usr/local/bin"
-	@echo "  help     - Show this help message"
+	@echo "  all        - Build server and client (default)"
+	@echo "  run_server - Build and run the server"
+	@echo "  run_client - Build and run the client"
+	@echo "  clean      - Remove object files and executables"
+	@echo "  rebuild    - Clean and rebuild"
+	@echo "  debug      - Build with debug flags"
+	@echo "  release    - Build with optimization flags"
+	@echo "  help       - Show this help message"
 
-.PHONY: all run clean rebuild debug release install uninstall help
+.PHONY: all run_server run_client clean rebuild debug release help

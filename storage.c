@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include "storage.h"
 
+char g_db_path[256];
+
 #define DEFAULT_QUOTA_BYTES (100 * 1024 * 1024)
 
 sqlite3* open_db() {
@@ -17,8 +19,8 @@ sqlite3* open_db() {
 
 int init_db(const char* db_path){
     if(db_path && db_path[0] != '\0'){
-      strncpy(g_db_path,db_path,(sizeof(g_db_path) - 1));
-      g_db_path[sizeof(g_db_path - 1)] = '\0';
+      strncpy(g_db_path, db_path, (sizeof(g_db_path) - 1));
+      g_db_path[sizeof(g_db_path) - 1] = '\0';
     }
     
     sqlite3 *db = open_db();

@@ -4,7 +4,7 @@
 #include<string.h>
 #include "queue.h"
 
-int global = 10;
+static int global = 10;
 
 Queue* queue_init(size_t data_size) {
     if (data_size == 0) {

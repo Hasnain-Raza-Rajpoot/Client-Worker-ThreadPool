@@ -4,9 +4,10 @@
 #include <sqlite3.h>
 #include <stdio.h>
 #include <string.h>
+#include<stdlib.h>
 #include <stdbool.h>
 
-char g_db_path[256];
+extern char g_db_path[256];
 
 sqlite3* open_db();
 

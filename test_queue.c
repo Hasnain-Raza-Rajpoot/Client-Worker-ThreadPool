@@ -1,4 +1,4 @@
-#include "queue.c"
+#include "queue.h"
 #include <string.h>
 
 // Print function for integers

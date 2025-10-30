@@ -1,7 +1,7 @@
 // test_storage.c
 #include <stdio.h>
 #include <string.h>
-#include "storage.c"
+#include "storage.h"
 
 int main() {
     const char *db_path = "test.db";

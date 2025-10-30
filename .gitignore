@@ -11,3 +11,11 @@ client
 *.cpp
 cleint1
 *.env
+*.obj
+*.o
+*.sh
+*.tex
+docs/
+server
+tmp_py_uploads/
+reports/

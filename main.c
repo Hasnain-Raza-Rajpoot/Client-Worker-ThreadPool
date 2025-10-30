@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "utility.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -10,9 +11,9 @@ atomic_int ServerRunning = 1;
 
 void execute_task(task* kaam) {
     char user_dir[512];
-    int dc = countDigits(kaam->Gahak.user_id);
+    size_t dc = countDigits(kaam->Gahak.user_id);
     char* str_user_id = malloc(dc + 1);
-    sprintf(str_user_id, "%d", kaam->Gahak.user_id);
+    sprintf(str_user_id, "%zu", kaam->Gahak.user_id);
     
     snprintf(user_dir, sizeof(user_dir), "%s%s/", kaam->Gahak.username, str_user_id);
     free(str_user_id);
@@ -297,15 +298,24 @@ bool signup_login(char* Cmd, client* Gahak){
         jaanDeyo=signup(username,password);
         int user_id = get_user_id(username);
         if(user_id!=-1){
-            char * foldername=malloc(strlen(username)+10);
-            memset(foldername,'\0',strlen(foldername));
-            strncpy(foldername,username,strlen(username));
-            printf("The current foldername is %s\n",foldername);
-            int dc = countDigits(user_id);
-            char* str_user_id = malloc(dc+1);
+            // size_t dc = countDigits(user_id);
+            // char * foldername=malloc(strlen(username)+dc+1);
+            // memset(foldername,'\0',strlen(foldername));
+            // strncpy(foldername,username,strlen(username));
+            // printf("The current foldername is %s\n",foldername);
+            // int dc = countDigits(user_id);
+            // char* str_user_id = malloc(dc+1);
 
-            sprintf(str_user_id, "%d", user_id);
-            strcat(foldername,str_user_id);
+            // sprintf(str_user_id, "%d", user_id);
+            // strcat(foldername,str_user_id);
+
+            size_t dc = countDigits(user_id);
+            size_t folder_size = strlen(username) + dc + 1;
+            char *foldername = malloc(folder_size);
+            snprintf(foldername, folder_size, "%s%zu", username, user_id);
+            printf("The foldername is %s\n", foldername);
+            // snprintf(foldername,strlen(foldername),"%s%zu",username,user_id);
+            // printf("The foldername is %s\n",foldername);
             if(mkdir(foldername,0777)!=0){
                 perror("Can not create the folder\n");
                 jaanDeyo = false;
@@ -314,7 +324,7 @@ bool signup_login(char* Cmd, client* Gahak){
             memset(Gahak->username,'\0',sizeof(Gahak->username));
             strncpy(Gahak->username, username, strlen(username));
             free(foldername);
-            free(str_user_id);
+            // free(str_user_id);
         }
         else{
             jaanDeyo = false;  
@@ -363,27 +373,38 @@ bool delete(task* aikKaam, char* filename){
 
 bool handleCmd(task* kaam,char * Cmd){
     char* what2do = firstWord(Cmd);
-    char * filename = firstWord(Cmd);
+    char* filename = firstWord(Cmd);
 
-    bool result = (((strcmp(what2do,"UPLOAD") == 0) && upload(kaam,filename)) 
-            || ((strcmp(what2do,"DOWNLOAD") == 0) && download(kaam,filename)) 
-            || ((strcmp(what2do,"DELETE") == 0)  && delete(kaam,filename))
-            || ((strcmp(what2do,"LIST") == 0) && (kaam->cmd = LIST)));
-    
-    free(what2do);   
+    bool result = false;
+
+    if(strcmp(what2do,"UPLOAD") == 0){
+        result = upload(kaam, filename);
+        // filename will be freed later after task completion
+        filename = NULL;
+    }
+    else if(strcmp(what2do,"DOWNLOAD") == 0){
+        result = download(kaam, filename);
+        filename = NULL;
+    }
+    else if(strcmp(what2do,"DELETE") == 0){
+        result = delete(kaam, filename);
+        filename = NULL;
+    }
+    else if(strcmp(what2do,"LIST") == 0){
+        kaam->cmd = LIST;
+        result = true;
+    }
+    else{
+        result = false;
+    }
+
+    if(filename){
+        free(filename);
+    }
+    free(what2do);
     return result;
 }
 
-ssize_t send_all(int sock, const void *buf, size_t len) {
-    size_t total = 0;
-    const char *p = buf;
-    while (total < len) {
-        ssize_t n = send(sock, p + total, len - total, 0);
-        if (n <= 0) return n;
-        total += n;
-    }
-    return total;
-}
 
 void* handle_client(void *arg){
     while(1){
