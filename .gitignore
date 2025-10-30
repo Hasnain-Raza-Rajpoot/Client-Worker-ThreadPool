@@ -1,6 +1,7 @@
 *.exe
 .vscode/
 *.db
+DB/
 Hasnain1/
 *.txt
 downloads/
