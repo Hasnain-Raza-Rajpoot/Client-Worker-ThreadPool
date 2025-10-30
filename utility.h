@@ -75,3 +75,14 @@ int countDigits(int n) {
         return 1;
     return (int)log10(fabs(n)) + 1;
 }
+
+ssize_t recv_all(int sock, void *buf, size_t len) {
+    size_t total = 0;
+    char *p = buf;
+    while (total < len) {
+        ssize_t n = recv(sock, p + total, len - total, 0);
+        if (n <= 0) return n;
+        total += n;
+    }
+    return total;
+}

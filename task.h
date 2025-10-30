@@ -10,8 +10,6 @@ typedef enum CMD{
 
 typedef struct task {
     CMD cmd;                // UPLOAD/DOWNLOAD/DELETE/LIST
-    // int client_fd;          // socket is NOT used by worker, but handy for logging
-    // char user[256];
     client Gahak;
     char* filename;     // empty for LIST
     char* payload; size_t payload_len;   // for UPLOAD/DOWNLOAD bodies

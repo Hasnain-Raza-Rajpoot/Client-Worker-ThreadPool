@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include "storage.h"
 
+#define DEFAULT_QUOTA_BYTES (100 * 1024 * 1024)
+
 sqlite3* open_db() {
     sqlite3 *db;
     if (sqlite3_open(g_db_path, &db) != SQLITE_OK) {
@@ -38,8 +40,34 @@ int init_db(const char* db_path){
         sqlite3_close(db);
         return -1;
     }
+    sqlite3_close(db);
+    if (init_quotas_table() != 0) {
+            return -1;
+    }
+    return 0;
+}
+int init_quotas_table() {
+    sqlite3 *db = open_db();
+    if (!db) return -1;
+
+    const char *sql =
+        "CREATE TABLE IF NOT EXISTS quotas ("
+        "user_id INTEGER PRIMARY KEY,"
+        "quota_bytes INTEGER DEFAULT 104857600,"  
+        "used_bytes INTEGER DEFAULT 0,"
+        "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE"
+        ");";
+
+    char *errmsg = NULL;
+    if (sqlite3_exec(db, sql, 0, 0, &errmsg) != SQLITE_OK) {
+        fprintf(stderr, "SQLite error creating quotas table: %s\n", errmsg);
+        sqlite3_free(errmsg);
+        sqlite3_close(db);
+        return -1;
+    }
 
     sqlite3_close(db);
+    printf("Quotas table initialized\n");
     return 0;
 }
 
@@ -73,8 +101,6 @@ bool signup(const char *username, const char *password) {
         sqlite3_close(db);
         return false;
     }
-
-    // Insert new user
     const char *insert_sql = "INSERT INTO users (username, password) VALUES (?, ?);";
     sqlite3_stmt *stmt;
 
@@ -94,6 +120,27 @@ bool signup(const char *username, const char *password) {
     }
 
     sqlite3_finalize(stmt);
+    if (ok) {
+        int user_id = get_user_id(username);
+        if (user_id != -1) {
+            const char *quota_sql = "INSERT INTO quotas (user_id, quota_bytes, used_bytes) VALUES (?, ?, 0);";
+            sqlite3_stmt *quota_stmt;
+            
+            if (sqlite3_prepare_v2(db, quota_sql, -1, &quota_stmt, NULL) == SQLITE_OK) {
+                sqlite3_bind_int(quota_stmt, 1, user_id);
+                sqlite3_bind_int64(quota_stmt, 2, DEFAULT_QUOTA_BYTES);
+                
+                if (sqlite3_step(quota_stmt) == SQLITE_DONE) {
+                    printf("Quota entry created for user %d (limit: %ld bytes)\n", 
+                           user_id, DEFAULT_QUOTA_BYTES);
+                } else {
+                    fprintf(stderr, "Failed to create quota entry: %s\n", sqlite3_errmsg(db));
+                }
+                
+                sqlite3_finalize(quota_stmt);
+            }
+        }
+    }
     sqlite3_close(db);
     return ok;
 }
@@ -141,7 +188,7 @@ int get_user_id(const char *username) {
 
     sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
 
-    int user_id = -1;  // default if not found
+    int user_id = -1;  
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         user_id = sqlite3_column_int(stmt, 0);
     }
@@ -149,4 +196,132 @@ int get_user_id(const char *username) {
     sqlite3_finalize(stmt);
     sqlite3_close(db);
     return user_id;
+}
+long get_user_quota(int user_id) {
+    sqlite3 *db = open_db();
+    if (!db) return -1;
+
+    const char *sql = "SELECT quota_bytes FROM quotas WHERE user_id = ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, user_id);
+
+    long quota = DEFAULT_QUOTA_BYTES; 
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        quota = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return quota;
+}
+long get_used_space(int user_id) {
+    sqlite3 *db = open_db();
+    if (!db) return -1;
+
+    const char *sql = "SELECT used_bytes FROM quotas WHERE user_id = ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, user_id);
+
+    long used = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        used = sqlite3_column_int64(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return used;
+}
+bool update_used_space(int user_id, long delta) {
+    sqlite3 *db = open_db();
+    if (!db) return false;
+    sqlite3_exec(db, "BEGIN TRANSACTION;", 0, 0, 0);
+
+    const char *sql = "UPDATE quotas SET used_bytes = used_bytes + ? WHERE user_id = ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK;", 0, 0, 0);
+        sqlite3_close(db);
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, delta);
+    sqlite3_bind_int(stmt, 2, user_id);
+
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    
+    sqlite3_finalize(stmt);
+
+    if (ok) {
+        sqlite3_exec(db, "COMMIT;", 0, 0, 0);
+        printf("Updated used space for user %d: delta=%ld bytes\n", user_id, delta);
+    } else {
+        fprintf(stderr, "Failed to update used space: %s\n", sqlite3_errmsg(db));
+        sqlite3_exec(db, "ROLLBACK;", 0, 0, 0);
+    }
+
+    sqlite3_close(db);
+    return ok;
+}
+bool check_quota(int user_id, long file_size) {
+    long quota = get_user_quota(user_id);
+    long used = get_used_space(user_id);
+
+    if (quota == -1 || used == -1) {
+        fprintf(stderr, "Failed to check quota for user %d\n", user_id);
+        return false;
+    }
+
+    long available = quota - used;
+    
+    printf("[QUOTA] User %d: used=%ld, quota=%ld, available=%ld, requested=%ld\n",
+           user_id, used, quota, available, file_size);
+
+    if (file_size > available) {
+        printf("[QUOTA] User %d quota exceeded! Need %ld bytes, only %ld available\n",
+               user_id, file_size, available);
+        return false;
+    }
+
+    return true;
+}
+void set_user_quota(int user_id, long quota_bytes) {
+    sqlite3 *db = open_db();
+    if (!db) return;
+
+    const char *sql = "UPDATE quotas SET quota_bytes = ? WHERE user_id = ?;";
+    sqlite3_stmt *stmt;
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        fprintf(stderr, "Prepare failed: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        return;
+    }
+
+    sqlite3_bind_int64(stmt, 1, quota_bytes);
+    sqlite3_bind_int(stmt, 2, user_id);
+
+    if (sqlite3_step(stmt) == SQLITE_DONE) {
+        printf("Set quota for user %d to %ld bytes\n", user_id, quota_bytes);
+    } else {
+        fprintf(stderr, "Failed to set quota: %s\n", sqlite3_errmsg(db));
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
 }

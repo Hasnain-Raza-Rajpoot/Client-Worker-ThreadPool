@@ -23,6 +23,28 @@ void execute_task(task* kaam) {
             char filepath[768];
             snprintf(filepath, sizeof(filepath), "%s%s", user_dir, kaam->filename);
             printf("The filepath is %s\n",filepath);
+
+            if (!check_quota(kaam->Gahak.user_id, kaam->payload_len)) {
+                kaam->status = -1;
+                
+                long quota = get_user_quota(kaam->Gahak.user_id);
+                long used = get_used_space(kaam->Gahak.user_id);
+                long available = quota - used;
+                
+                char error_msg[512];
+                snprintf(error_msg, sizeof(error_msg), 
+                        "UPLOAD FAILED: Quota exceeded. Available: %ld bytes, Needed: %zu bytes",
+                        available, kaam->payload_len);
+                
+                kaam->resp = strdup(error_msg);
+                kaam->resp_len = strlen(kaam->resp) + 1;
+                
+                // Free the payload
+                free(kaam->payload);
+                kaam->payload = NULL;
+                break;
+            }
+
             pthread_mutex_t* file_lock = acquire_file_lock(GlobalFileLockTable, filepath);
             if (!file_lock) {
                 kaam->status = -1;
@@ -30,6 +52,16 @@ void execute_task(task* kaam) {
                 kaam->resp_len = strlen(kaam->resp) + 1;
                 break;
             }
+
+            bool file_exists = false;
+            long old_file_size = 0;
+            struct stat st;
+            if (stat(filepath, &st) == 0) {
+                file_exists = true;
+                old_file_size = st.st_size;
+                printf("File exists, size: %ld bytes. Will be overwritten.\n", old_file_size);
+            }
+
             FILE* fp = fopen(filepath, "wb");
             if(fp == NULL) {
                 perror("Failed to open file for writing");
@@ -49,6 +81,18 @@ void execute_task(task* kaam) {
             } else {
                 kaam->status = 0;
                 kaam->resp = strdup("UPLOAD SUCCESS");
+
+                long delta;
+                if (file_exists) {
+                    delta = (long)kaam->payload_len - old_file_size;
+                    printf("Overwriting file: delta = %ld bytes\n", delta);
+                } else {
+                    delta = (long)kaam->payload_len;
+                }
+                
+                if (!update_used_space(kaam->Gahak.user_id, delta)) {
+                    fprintf(stderr, "Warning: Failed to update quota after upload\n");
+                }
             }
             kaam->resp_len = strlen(kaam->resp) + 1;
             free(kaam->payload);
@@ -122,10 +166,23 @@ void execute_task(task* kaam) {
                 kaam->resp_len = strlen(kaam->resp) + 1;
                 break;
             }
+
+             struct stat st;
+            long file_size = 0;
+            bool file_exists = false;
+            
+            if (stat(filepath, &st) == 0) {
+                file_size = st.st_size;
+                file_exists = true;
+                printf("File size: %ld bytes\n", file_size);
+            }
             
             if(unlink(filepath) == 0) {
                 kaam->status = 0;
                 kaam->resp = strdup("DELETE SUCCESS");
+                if (file_exists && !update_used_space(kaam->Gahak.user_id, -file_size)) {
+                    fprintf(stderr, "Warning: Failed to update quota after delete\n");
+                }
             } else {
                 perror("Failed to delete file");
                 kaam->status = -1;
@@ -154,7 +211,10 @@ void execute_task(task* kaam) {
                 release_file_lock(GlobalFileLockTable, user_dir);
                 break;
             }
-    
+
+             long quota = get_user_quota(kaam->Gahak.user_id);
+            long used = get_used_space(kaam->Gahak.user_id);
+
             char file_list[4096] = "FILES:\n";
             struct dirent* entry;
             int count = 0;
@@ -163,8 +223,18 @@ void execute_task(task* kaam) {
                 if(strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                     continue;
                     
-                strcat(file_list, entry->d_name);
-                strcat(file_list, "\n");
+                char full_path[1024];
+                snprintf(full_path, sizeof(full_path), "%s%s", user_dir, entry->d_name);
+                
+                struct stat st;
+                long size = 0;
+                if (stat(full_path, &st) == 0) {
+                    size = st.st_size;
+                }
+                
+                char file_info[256];
+                snprintf(file_info, sizeof(file_info), "%s (%ld bytes)\n", entry->d_name, size);
+                strcat(file_list, file_info);   
                 count++;
             }
             closedir(dir);
@@ -267,8 +337,12 @@ bool upload(task* aikKaam, char* filename){
     aikKaam->cmd = UPLOAD;
     aikKaam->filename = filename;
     if(recv(aikKaam->Gahak.client_fd,&(aikKaam->payload_len),sizeof(size_t),0)>0){
-        aikKaam->payload = malloc(aikKaam->payload_len*sizeof(char));
-        if(recv(aikKaam->Gahak.client_fd,aikKaam->payload,aikKaam->payload_len,0)>0){
+        aikKaam->payload = malloc(aikKaam->payload_len);
+        if(aikKaam->payload == NULL) {
+            perror("Memory allocation failed for payload");
+            return false;
+        }
+        if(recv_all(aikKaam->Gahak.client_fd,aikKaam->payload,aikKaam->payload_len)>0){
             return true;
         }
     }
@@ -375,8 +449,8 @@ void* handle_client(void *arg){
             
             if(valid_cmd) {
                 printf("Valid command, processing...\n");
-                kaam->m = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
-                kaam->cv = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
+                // kaam->m = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+                // kaam->cv = (pthread_cond_t)PTHREAD_COND_INITIALIZER;
                 
                 if(pthread_mutex_init(&kaam->m, NULL) != 0){
                     perror("Failed to initialize task mutex");

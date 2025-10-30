@@ -4,3 +4,9 @@
 Hasnain1/
 *.txt
 downloads/
+*.obj
+main
+client
+*.cpp
+cleint1
+*.env
